@@ -1,0 +1,1 @@
+cc_binary(name = "ldx",srcs = glob(["*.cpp"]))
