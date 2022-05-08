@@ -1,4 +1,4 @@
-m4_changequote([<,>])
+#m4_changequote([<,>])
 load("//:rust.bzl","rs_ll_emit")
 load("//:base.bzl","LLLibrary")
 load("@rules_rust//rust/private:rustc.bzl", "BuildInfo")
@@ -7,30 +7,16 @@ def make_ll_library(ctx,files,aspect = True):
     cf = []
     for s in files:
         ff = ctx.actions.declare_file(s + ".c")
-        ctx.actions.run(inputs = [s],outputs = [ff],executable = "llvm-cbe",arguments = [s,"-o",ff])
+        ctx.actions.run(inputs = [s],outputs = [ff],executable = ctx.toolchains["//:llvm"].cbe.files,arguments = [s,"-o",ff])
         cf = cf + [ff]
     ef = []
     for s in cf:
         ff = ctx.actions.declare_file(s + ".eir")
-        ctx.actions.run(inputs = [s],outputs = [ff],executable = "elvm-8cc",arguments = [s,"-c","-o",ff])
+        ctx.actions.run(inputs = [s],outputs = [ff],executable = ctx.toolchains["//:llvm"].elvm8cc,arguments = [s,"-c","-o",ff])
         ef = ef + [ff]
-    rf = []
-    for s in cf:
-        ff = ctx.actions.declare_file(s)
-        ctx.actions.run(inputs = [s],outputs = [ff],executable = "reduction-pluggable",arguments = [s,ff])
-        rf += [ff]
-    return [LLLibrary(files = files,cRender = cf,reducedCCode = rf)] + make_eir_library(ctx,files = ef, aspect = aspect) + (if aspect then [] else [DefaultInfo(files = files)])
+    return [LLLibrary(files = files,cRender = cf)] + make_eir_library(ctx,files = ef, aspect = aspect) + (if aspect then [] else [DefaultInfo(files = files)])
 def make_eir_library(ctx,files,aspect = True):
     render = {}
-    m4_define([<emit_render>],[<
-    render["$1"] = []
-    for f in files:
-        ff = ctx.actions.declare_file(f + ".out")
-        ctx.actions.run(inputs = [f],outputs = [ff],executable = "elv",arguments = ["-$1",f,"-o",ff])
-        render["$1"] = render["$1"] + [ff]
-    >])
-    m4_esyscmd([<elv -print-backends | xargs -I echo "emit_render({})">])
-    m4_undefine([<emit_render>])
     return [EiLibrary(files = files, render = render)]
 def _ll_visit_impl(target,ctx):
     d = [dep[LLLibrary].files for d in ctx.deps]
@@ -45,18 +31,19 @@ def _ll_visit_impl(target,ctx):
             a = [s,"-S","--emit-llvm","-o",f]
             for i in target[CCInfo].compilation_context.includes:
                 a += ["-I",i]
-            ctx.actions.run(outputs = [ff],inputs = s + h,executable = "clang",args = a)
+            ctx.actions.run(outputs = [ff],inputs = s + h,executable = ctx.toolchains["//:llvm"].clang.files,args = a)
             f += [ff]
         return make_ll_library(ctx,files = depset(f, transitive = d))
     if GoLibrary in target:
         ll = ctx.actions.declare_file(target[GoLibrary].importpath + ".ll")
-        ctx.actions.run(outputs = [ll], inputs = target.srcs, executable = "llvm-goc", arguments = ["-fgo-pkgpath=" + target[GoLibrary].importpath,"-S","--emit-llvm","-o",ll] + srcs)
+        ctx.actions.run(outputs = [ll], inputs = target.srcs, executable = ctx.toolchains["//:llvm"].goc.files, arguments = ["-fgo-pkgpath=" + target[GoLibrary].importpath,"-S","--emit-llvm","-o",ll] + srcs)
         return make_ll_library(ctx,files = depset([ll], transitive = d))
     return make_ll_library(ctx,files = depset([], transitive = d))
 
 ll_visit = aspect(
     implenentation = _ll_visit_impl,
-    attr_aspects = ['deps']
+    attr_aspects = ['deps'],
+    toolchains = ["//:llvm"]
 )
 
 def _ll_library_impl(ctx):
@@ -71,7 +58,7 @@ ll_library = rule(
     implenentation = _ll_library_impl,
     attrs = {
         'src': attr.label(aspects = [ll_visit]),
-        'libs': attr.label_list(aspects = [ll_visit],default = ["//c"]),
+        'libs': attr.label_list(aspects = [ll_visit]),
         'deps': attr.label_list()
     }
 )
@@ -99,20 +86,6 @@ llvm_cbe_cat = rule(
     }
 )
 
-def _ll_prefix_impl(ctx):
-    f = []
-    for s in ctx.attr.src[LLLibrary].files:
-        ff = ctx.actions.declare_file(s)
-        ctx.actions.run(executable = "llvm-prefix",inputs = [s],outputs = [ff],arguments = ["-p",ctx.attr.prefix,s,"-o",ff])
-        f = f + [ff]
-    return make_ll_library(ctx,files = f,aspect = False)
-ll_prefix = rule(
-    implenentation = _ll_library_impl,
-    attrs = {
-        'src': attr.label(),
-        'prefix': attr.string()
-    }
-)
 
 def _elvm_target_impl(ctx):
     return [DefaultInfo(files = ctx.attr.src[EiLibrary].render[ctx.attr.target])]

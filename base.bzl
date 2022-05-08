@@ -1,4 +1,4 @@
-m4_changequote([<,>])
+#m4_changequote([<,>])
 LLLibrary = provider(fields = {
     "files": "files for LLVM",
     "cRender": "Rendered C source code files",
